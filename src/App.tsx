@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { User } from 'firebase/auth';
 import { Header, isAuthorizedAdmin } from './components/Header';
 import { VoterPortal } from './components/VoterPortal';
@@ -13,7 +13,21 @@ import {
   fetchEmployeesFromSheet,
   appendVoteRecordToSheet,
 } from './services/googleSheets';
-import { initAuth, googleSignIn, logout } from './services/firebase';
+import {
+  initAuth,
+  googleSignIn,
+  logout,
+  subscribeVotes,
+  subscribeEmployees,
+  subscribeCandidates,
+  subscribeSystemConfig,
+  castVoteInFirestore,
+  seedEmployeesToFirestore,
+  seedCandidatesToFirestore,
+  resetVotesInFirestore,
+  updateSystemConfigInFirestore,
+  testFirestoreConnection,
+} from './services/firebase';
 import { sound } from './utils/audio';
 
 export default function App() {
@@ -24,83 +38,22 @@ export default function App() {
   const [isPresentationOpen, setIsPresentationOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [isSyncingSheet, setIsSyncingSheet] = useState(false);
+  const [firebaseConnected, setFirebaseConnected] = useState(true);
 
   // Core state: Employees
-  const [employees, setEmployees] = useState<Employee[]>(() => {
-    const saved = localStorage.getItem('voting_employees_v4') || localStorage.getItem('voting_employees_v3');
-    if (saved) {
-      try {
-        const parsed: Employee[] = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Auto-heal any previous bad sync where name was mistakenly set to ID
-          const healed = parsed.map((emp) => {
-            if (emp.name === emp.id || !emp.name) {
-              const matched = DEFAULT_EMPLOYEES.find((d) => d.id === emp.id);
-              if (matched) {
-                return {
-                  ...emp,
-                  name: matched.name,
-                  department: matched.department,
-                  position: matched.position,
-                };
-              }
-            }
-            return emp;
-          });
-          // If previous dataset was old 12-item demo, update to the actual 33 employees
-          if (healed.length < 20) {
-            return DEFAULT_EMPLOYEES;
-          }
-          return healed;
-        }
-      } catch {
-        // fallback
-      }
-    }
-    return DEFAULT_EMPLOYEES;
-  });
+  const [employees, setEmployees] = useState<Employee[]>(DEFAULT_EMPLOYEES);
 
   // Core state: The 8 Teams (T01 - T08, where T08 HR is non-votable)
-  const [candidates, setCandidates] = useState<Candidate[]>(() => {
-    const saved = localStorage.getItem('voting_candidates_v5');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length === 8 && parsed[0]?.code) {
-          return parsed;
-        }
-      } catch {
-        // fallback
-      }
-    }
-    return INITIAL_TEAMS;
-  });
+  const [candidates, setCandidates] = useState<Candidate[]>(INITIAL_TEAMS);
 
   // Core state: Votes
-  const [votes, setVotes] = useState<VoteRecord[]>(() => {
-    const saved = localStorage.getItem('voting_records_v3');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        // fallback
-      }
-    }
-    return [];
-  });
+  const [votes, setVotes] = useState<VoteRecord[]>([]);
 
   // Google Sheet configuration
-  const [sheetConfig, setSheetConfig] = useState<SheetConfig | null>(() => {
-    const saved = localStorage.getItem('voting_sheet_config');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        // fallback
-      }
-    }
-    return null;
-  });
+  const [sheetConfig, setSheetConfig] = useState<SheetConfig | null>(null);
+
+  // Ref to track if initial seeding was attempted
+  const hasAttemptedSeed = useRef(false);
 
   // Initialize Firebase Auth
   useEffect(() => {
@@ -115,26 +68,92 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Save changes to localStorage
+  // Periodic Firestore connection health check
   useEffect(() => {
-    localStorage.setItem('voting_employees_v4', JSON.stringify(employees));
-  }, [employees]);
+    let isMounted = true;
+    const checkConnection = async () => {
+      const ok = await testFirestoreConnection();
+      if (isMounted) setFirebaseConnected(ok);
+    };
+    checkConnection();
+    const interval = setInterval(checkConnection, 30000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
+  // Subscribe to real-time Firestore collections
   useEffect(() => {
-    localStorage.setItem('voting_candidates_v5', JSON.stringify(candidates));
-  }, [candidates]);
+    // 1. Subscribe to Votes
+    const unsubVotes = subscribeVotes(
+      (firestoreVotes) => {
+        setVotes(firestoreVotes);
+        setFirebaseConnected(true);
+      },
+      (err) => {
+        console.warn('Votes listener warning:', err.error);
+      }
+    );
 
-  useEffect(() => {
-    localStorage.setItem('voting_records_v3', JSON.stringify(votes));
-  }, [votes]);
+    // 2. Subscribe to Employees
+    const unsubEmployees = subscribeEmployees(
+      (firestoreEmployees) => {
+        if (firestoreEmployees.length > 0) {
+          setEmployees(firestoreEmployees);
+        } else if (!hasAttemptedSeed.current) {
+          hasAttemptedSeed.current = true;
+          // Seed default employees to Firestore on first run
+          seedEmployeesToFirestore(DEFAULT_EMPLOYEES).catch((e) =>
+            console.warn('Auto-seed employees:', e)
+          );
+        }
+        setFirebaseConnected(true);
+      },
+      (err) => {
+        console.warn('Employees listener warning:', err.error);
+      }
+    );
 
-  useEffect(() => {
-    if (sheetConfig) {
-      localStorage.setItem('voting_sheet_config', JSON.stringify(sheetConfig));
-    }
-  }, [sheetConfig]);
+    // 3. Subscribe to Candidates
+    const unsubCandidates = subscribeCandidates(
+      (firestoreCandidates) => {
+        if (firestoreCandidates.length >= 8) {
+          setCandidates(firestoreCandidates);
+        } else if (!hasAttemptedSeed.current) {
+          // Seed default candidates to Firestore
+          seedCandidatesToFirestore(INITIAL_TEAMS).catch((e) =>
+            console.warn('Auto-seed candidates:', e)
+          );
+        }
+        setFirebaseConnected(true);
+      },
+      (err) => {
+        console.warn('Candidates listener warning:', err.error);
+      }
+    );
 
-  // Real-time synchronization across browser tabs using BroadcastChannel
+    // 4. Subscribe to System Config (e.g. connected sheet)
+    const unsubConfig = subscribeSystemConfig(
+      (config) => {
+        if (config) {
+          setSheetConfig(config);
+        }
+      },
+      (err) => {
+        console.warn('Config listener warning:', err.error);
+      }
+    );
+
+    return () => {
+      unsubVotes();
+      unsubEmployees();
+      unsubCandidates();
+      unsubConfig();
+    };
+  }, []);
+
+  // Real-time synchronization across browser tabs using BroadcastChannel as fast local lane
   useEffect(() => {
     if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return;
     const channel = new BroadcastChannel('voting_realtime_sync_v3');
@@ -278,7 +297,10 @@ export default function App() {
       });
 
       setEmployees(merged);
-      setSheetConfig((prev) => (prev ? { ...prev, lastSyncedAt: new Date().toLocaleTimeString('th-TH') } : null));
+      const updatedConfig = { ...sheetConfig, lastSyncedAt: new Date().toLocaleTimeString('th-TH') };
+      setSheetConfig(updatedConfig);
+      await updateSystemConfigInFirestore(updatedConfig);
+      await seedEmployeesToFirestore(merged);
       broadcastEvent({ type: 'UPDATE_EMPLOYEES', employees: merged });
     } catch (err) {
       console.error('Failed to sync sheet:', err);
@@ -288,7 +310,7 @@ export default function App() {
     }
   }, [sheetConfig, votes]);
 
-  // Cast Vote Action (Supports allocations: +1, +2, +3)
+  // Cast Vote Action (Commits to Firestore + Broadcast + Google Sheets)
   const handleCastVote = async (
     employee: Employee,
     allocations: VoteAllocation[],
@@ -308,7 +330,8 @@ export default function App() {
       employeeDepartment: employee.department,
       candidateId: alloc.candidateId,
       weight: alloc.weight,
-      isExecutive: employee.isExecutive,
+      isExecutive: !!employee.isExecutive,
+      isSupervisor: !!employee.isSupervisor || employee.voteWeight === 2,
       timestamp,
     }));
 
@@ -319,7 +342,7 @@ export default function App() {
       })
       .join(', ');
 
-    // Update state
+    // 1. Immediate local optimistic update
     setVotes((prev) => [...prev, ...newVoteRecords]);
     setEmployees((prev) =>
       prev.map((e) => {
@@ -342,7 +365,15 @@ export default function App() {
       })
     );
 
-    // Broadcast in real-time
+    // 2. Commit to Firebase Firestore in real-time
+    try {
+      await castVoteInFirestore(newVoteRecords, employee.id, category, summary, timestamp);
+      setFirebaseConnected(true);
+    } catch (err) {
+      console.warn('Firestore commit error, proceeding with local & sheets:', err);
+    }
+
+    // 3. Broadcast to other local browser tabs
     broadcastEvent({
       type: 'VOTE_CAST_MULTI',
       votes: newVoteRecords,
@@ -351,7 +382,7 @@ export default function App() {
       summary,
     });
 
-    // Append to Google Sheets in background
+    // 4. Append to Google Sheets in background if configured
     if (sheetConfig?.spreadsheetId) {
       for (const rec of newVoteRecords) {
         const team = candidates.find((c) => c.id === rec.candidateId);
@@ -359,15 +390,16 @@ export default function App() {
           sheetConfig.spreadsheetId,
           rec,
           team ? `[${team.code}] ${team.name}` : rec.candidateId
-        );
+        ).catch((e) => console.warn('Sheet append error:', e));
       }
     }
 
     return true;
   };
 
-  // Reset Votes
-  const handleResetVotes = (category: 'all' | 'general' | 'popular' = 'all') => {
+  // Reset Votes (Admins only - syncs to Firestore)
+  const handleResetVotes = async (category: 'all' | 'general' | 'popular' = 'all') => {
+    // 1. Optimistic local update
     if (category === 'all') {
       setVotes([]);
       setEmployees((prev) =>
@@ -402,11 +434,33 @@ export default function App() {
         }))
       );
     }
+
+    // 2. Reset in Firestore
+    try {
+      await resetVotesInFirestore(category);
+    } catch (err) {
+      console.warn('Firestore reset error:', err);
+    }
+
+    // 3. Broadcast
     broadcastEvent({ type: 'RESET_VOTES', category });
   };
 
+  // Update employees handler (admin)
+  const handleUpdateEmployees = async (newEmployees: Employee[]) => {
+    setEmployees(newEmployees);
+    await seedEmployeesToFirestore(newEmployees).catch((e) => console.warn(e));
+    broadcastEvent({ type: 'UPDATE_EMPLOYEES', employees: newEmployees });
+  };
+
+  // Update candidates handler (admin)
+  const handleUpdateCandidates = async (newCandidates: Candidate[]) => {
+    setCandidates(newCandidates);
+    await seedCandidatesToFirestore(newCandidates).catch((e) => console.warn(e));
+  };
+
   // Simulate Demo Votes (with executive +1, +2, +3 splits)
-  const handleSimulateVotes = () => {
+  const handleSimulateVotes = async () => {
     const unvotedGeneral = employees.filter((e) => !e.hasVotedGeneral);
     const unvotedPopular = employees.filter((e) => !e.hasVotedPopular);
 
@@ -421,11 +475,10 @@ export default function App() {
     if (votableCandidates.length === 0) return;
 
     // Simulate for 3 unvoted in general
-    unvotedGeneral.slice(0, 3).forEach((emp) => {
+    for (const emp of unvotedGeneral.slice(0, 3)) {
       const time = new Date().toLocaleTimeString('th-TH');
 
       if (emp.isExecutive) {
-        // Executive split: e.g. +2 to one team and +1 to another
         const shuffled = [...votableCandidates].sort(() => 0.5 - Math.random());
         const teamA = shuffled[0];
         const teamB = shuffled[1] || shuffled[0];
@@ -461,66 +514,31 @@ export default function App() {
           target.votedGeneralFor = `${teamA.code} (+2), ${teamB.code} (+1)`;
           target.votedGeneralAt = time;
         }
+
+        await castVoteInFirestore([voteA, voteB], emp.id, 'general', `${teamA.code} (+2), ${teamB.code} (+1)`, time).catch(() => {});
       } else if (emp.isSupervisor || emp.voteWeight === 2) {
-        // Supervisor: +2 to one team, or +1 and +1 to two teams
         const shuffled = [...votableCandidates].sort(() => 0.5 - Math.random());
         const teamA = shuffled[0];
-        const teamB = shuffled[1];
-        const giveSplit = Math.random() > 0.5 && teamB;
-
-        if (giveSplit) {
-          const vA: VoteRecord = {
-            id: `vote-sim-gen-${Date.now()}-${emp.id}-A`,
-            category: 'general',
-            employeeId: emp.id,
-            employeeName: emp.name,
-            employeeDepartment: emp.department,
-            candidateId: teamA.id,
-            weight: 1,
-            isExecutive: false,
-            isSupervisor: true,
-            timestamp: time,
-          };
-          const vB: VoteRecord = {
-            id: `vote-sim-gen-${Date.now()}-${emp.id}-B`,
-            category: 'general',
-            employeeId: emp.id,
-            employeeName: emp.name,
-            employeeDepartment: emp.department,
-            candidateId: teamB.id,
-            weight: 1,
-            isExecutive: false,
-            isSupervisor: true,
-            timestamp: time,
-          };
-          newRecords.push(vA, vB);
-          const target = updatedEmployees.find((e) => e.id === emp.id);
-          if (target) {
-            target.hasVotedGeneral = true;
-            target.votedGeneralFor = `${teamA.code} (+1), ${teamB.code} (+1)`;
-            target.votedGeneralAt = time;
-          }
-        } else {
-          const v: VoteRecord = {
-            id: `vote-sim-gen-${Date.now()}-${emp.id}`,
-            category: 'general',
-            employeeId: emp.id,
-            employeeName: emp.name,
-            employeeDepartment: emp.department,
-            candidateId: teamA.id,
-            weight: 2,
-            isExecutive: false,
-            isSupervisor: true,
-            timestamp: time,
-          };
-          newRecords.push(v);
-          const target = updatedEmployees.find((e) => e.id === emp.id);
-          if (target) {
-            target.hasVotedGeneral = true;
-            target.votedGeneralFor = `${teamA.code} (+2)`;
-            target.votedGeneralAt = time;
-          }
+        const v: VoteRecord = {
+          id: `vote-sim-gen-${Date.now()}-${emp.id}`,
+          category: 'general',
+          employeeId: emp.id,
+          employeeName: emp.name,
+          employeeDepartment: emp.department,
+          candidateId: teamA.id,
+          weight: 2,
+          isExecutive: false,
+          isSupervisor: true,
+          timestamp: time,
+        };
+        newRecords.push(v);
+        const target = updatedEmployees.find((e) => e.id === emp.id);
+        if (target) {
+          target.hasVotedGeneral = true;
+          target.votedGeneralFor = `${teamA.code} (+2)`;
+          target.votedGeneralAt = time;
         }
+        await castVoteInFirestore([v], emp.id, 'general', `${teamA.code} (+2)`, time).catch(() => {});
       } else {
         const randomCand = votableCandidates[Math.floor(Math.random() * votableCandidates.length)];
         const v: VoteRecord = {
@@ -542,11 +560,12 @@ export default function App() {
           target.votedGeneralFor = `${randomCand.code} (+1)`;
           target.votedGeneralAt = time;
         }
+        await castVoteInFirestore([v], emp.id, 'general', `${randomCand.code} (+1)`, time).catch(() => {});
       }
-    });
+    }
 
     // Simulate for 3 unvoted in popular
-    unvotedPopular.slice(0, 3).forEach((emp) => {
+    for (const emp of unvotedPopular.slice(0, 3)) {
       const randomCand = votableCandidates[Math.floor(Math.random() * votableCandidates.length)];
       const time = new Date().toLocaleTimeString('th-TH');
       const v: VoteRecord = {
@@ -568,7 +587,8 @@ export default function App() {
         target.votedPopularFor = `${randomCand.code} (+1)`;
         target.votedPopularAt = time;
       }
-    });
+      await castVoteInFirestore([v], emp.id, 'popular', `${randomCand.code} (+1)`, time).catch(() => {});
+    }
 
     setVotes((prev) => [...prev, ...newRecords]);
     setEmployees(updatedEmployees);
@@ -584,7 +604,14 @@ export default function App() {
   const isAdmin = isAuthorizedAdmin(currentUser?.email);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white antialiased">
+      {/* Background ambient lighting */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/3 -right-40 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 left-1/3 w-96 h-96 bg-pink-600/10 rounded-full blur-3xl" />
+      </div>
+
       {/* Header */}
       <Header
         activeTab={activeTab}
@@ -599,10 +626,11 @@ export default function App() {
         onSignIn={handleSignIn}
         onSignOut={handleSignOut}
         isLoadingAuth={isLoadingAuth}
+        firebaseConnected={firebaseConnected}
       />
 
-      {/* Main Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {/* Main Content Area */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10">
         {activeTab === 'vote' && (
           <VoterPortal
             employees={employees}
@@ -630,8 +658,8 @@ export default function App() {
             employees={employees}
             candidates={candidates}
             votes={votes}
-            onUpdateEmployees={setEmployees}
-            onUpdateCandidates={setCandidates}
+            onUpdateEmployees={handleUpdateEmployees}
+            onUpdateCandidates={handleUpdateCandidates}
             onResetVotes={handleResetVotes}
             onSimulateVotes={handleSimulateVotes}
             onOpenSheetModal={() => setIsSheetModalOpen(true)}
@@ -651,12 +679,14 @@ export default function App() {
         onSignIn={handleSignIn}
         onSignOut={handleSignOut}
         sheetConfig={sheetConfig}
-        onSaveConfig={(cfg, loadedEmps) => {
+        onSaveConfig={async (cfg, loadedEmps) => {
           setSheetConfig(cfg);
           setEmployees(loadedEmps);
+          await updateSystemConfigInFirestore(cfg);
+          await seedEmployeesToFirestore(loadedEmps);
         }}
         isLoadingAuth={isLoadingAuth}
-        onLoadEmployees={setEmployees}
+        onLoadEmployees={handleUpdateEmployees}
       />
 
       {/* Stage Presentation Mode */}
@@ -669,9 +699,23 @@ export default function App() {
         />
       )}
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 py-4 text-center text-xs text-slate-500">
-        ระบบโหวต 6 ทีม • หมวดคะแนนทั่วไป (ผู้บริหาร 3 คะแนน เลือกกระจาย +1, +2, +3 ได้ / พนักงาน 1 คะแนน) และ Popular Vote
+      {/* Modernized Footer */}
+      <footer className="border-t border-slate-900/90 bg-slate-950/60 backdrop-blur-md py-4 text-center text-xs text-slate-500 relative z-10">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
+            <span>ระบบโหวตคะแนน 8 ทีม (T01 - T08) พร้อมระบบคำนวณน้ำหนักสิทธิ์</span>
+          </div>
+          <div className="text-slate-400 font-mono text-[11px] flex items-center gap-3">
+            <span>ผู้บริหาร 3 คะแนน (+1,+2,+3)</span>
+            <span>•</span>
+            <span>หัวหน้างาน 2 คะแนน (+1,+2)</span>
+            <span>•</span>
+            <span>พนักงาน 1 คะแนน</span>
+            <span>•</span>
+            <span className="text-pink-400">Popular Vote 1 คะแนน</span>
+          </div>
+        </div>
       </footer>
     </div>
   );

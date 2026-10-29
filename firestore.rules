@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        (request.auth.token.email == 'chuleeporn180231@gmail.com' ||
+         request.auth.token.email == 'its.chaiyod.c@gmail.com');
+    }
+
+    // Public read for live scores and voting status
+    match /votes/{voteId} {
+      allow read: if true;
+      allow create: if request.resource.data.category in ['general', 'popular'] &&
+                      request.resource.data.employeeId is string &&
+                      request.resource.data.candidateId is string &&
+                      request.resource.data.weight is number &&
+                      request.resource.data.weight > 0 &&
+                      request.resource.data.weight <= 3;
+      allow update, delete: if isAdmin();
+    }
+
+    match /employees/{employeeId} {
+      allow read: if true;
+      // Allow voters to mark their voting status or admins to manage all
+      allow update: if isAdmin() || (
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['hasVotedGeneral', 'votedGeneralFor', 'votedGeneralAt', 'hasVotedPopular', 'votedPopularFor', 'votedPopularAt'])
+      );
+      allow create, delete: if isAdmin();
+    }
+
+    match /candidates/{candidateId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /system/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

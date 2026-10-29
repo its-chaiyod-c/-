@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "Vote": {
+      "title": "Vote",
+      "description": "A single vote cast by an employee for a team",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "category": { "type": "string", "enum": ["general", "popular"] },
+        "employeeId": { "type": "string", "maxLength": 32 },
+        "employeeName": { "type": "string", "maxLength": 100 },
+        "employeeDepartment": { "type": "string", "maxLength": 100 },
+        "candidateId": { "type": "string", "maxLength": 32 },
+        "candidateName": { "type": "string", "maxLength": 100 },
+        "weight": { "type": "number" },
+        "role": { "type": "string", "enum": ["executive", "supervisor", "staff"] },
+        "timestamp": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "category", "employeeId", "candidateId", "weight"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Employee voter registry and their voting status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 32 },
+        "name": { "type": "string", "maxLength": 100 },
+        "department": { "type": "string", "maxLength": 100 },
+        "position": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["executive", "supervisor", "staff"] },
+        "voteWeight": { "type": "number" },
+        "hasVotedGeneral": { "type": "boolean" },
+        "votedGeneralFor": { "type": "string", "maxLength": 32 },
+        "votedGeneralAt": { "type": "string", "maxLength": 64 },
+        "hasVotedPopular": { "type": "boolean" },
+        "votedPopularFor": { "type": "string", "maxLength": 32 },
+        "votedPopularAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "department", "role", "voteWeight"]
+    },
+    "Candidate": {
+      "title": "Candidate",
+      "description": "A competing team candidate",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 32 },
+        "code": { "type": "string", "maxLength": 16 },
+        "name": { "type": "string", "maxLength": 100 },
+        "department": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 255 },
+        "color": { "type": "string", "maxLength": 64 },
+        "badgeBg": { "type": "string", "maxLength": 64 },
+        "isNonVotable": { "type": "boolean" }
+      },
+      "required": ["id", "code", "name"]
+    },
+    "SystemConfig": {
+      "title": "SystemConfig",
+      "description": "Global application configuration and sheet sync state",
+      "type": "object",
+      "properties": {
+        "spreadsheetId": { "type": "string", "maxLength": 128 },
+        "sheetTitle": { "type": "string", "maxLength": 128 },
+        "url": { "type": "string", "maxLength": 256 },
+        "lastSyncedAt": { "type": "string", "maxLength": 64 }
+      }
+    }
+  },
+  "firestore": {
+    "/votes/{voteId}": {
+      "schema": { "$ref": "#/entities/Vote" },
+      "description": "All submitted voting ballots"
+    },
+    "/employees/{employeeId}": {
+      "schema": { "$ref": "#/entities/Employee" },
+      "description": "Employees database and individual voting records"
+    },
+    "/candidates/{candidateId}": {
+      "schema": { "$ref": "#/entities/Candidate" },
+      "description": "All 8 teams / candidates"
+    },
+    "/system/{configId}": {
+      "schema": { "$ref": "#/entities/SystemConfig" },
+      "description": "App settings and synchronization state"
+    }
+  }
+}
