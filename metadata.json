@@ -1,0 +1,6 @@
+{
+  "name": "Live Employee Voting Dashboard",
+  "description": "ระบบโหวตคะแนนเรียลไทม์ แสดงผลกราฟสดใส ดึงรายชื่อพนักงานจาก Google Sheets พร้อมระบบถ่วงน้ำหนักคะแนนพนักงานและผู้บริหาร",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

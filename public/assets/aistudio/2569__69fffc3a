@@ -1,0 +1,34 @@
+รหัสพนักงาน (ID),ชื่อ-นามสกุล (Full Name),แผนก (Department),ตำแหน่ง (Position),คะแนนโหวตทั่วไป (General Weight),คะแนน Popular Vote
+A1002,สุภาพร บางม่วง,Accounting and Finance,พนักงานทั่วไป (Staff),1,1
+A2001,ชัยวัฒน์ เอมอิ่ม,Accounting and Finance,พนักงานทั่วไป (Staff),1,1
+A2003,ชรัญฏา โตรุ่ง,Accounting and Finance,พนักงานทั่วไป (Staff),1,1
+E1001,วิรุฬห์ สุพรรณวัฒนชัย,"P2V Group Co.,LTD",ผู้บริหาร (Executive),3,1
+E1004,ธนนท์ มณีมาส,"P2V Group Co.,LTD",ผู้บริหาร (Executive),3,1
+E1005,ศิริพงศ์ จงวิวัฒน์สุนทร,"P2V Group Co.,LTD",ผู้บริหาร (Executive),3,1
+M2003,โกสินทร์ ประเสริฐศรี,Marketing & Graphic Design,พนักงานทั่วไป (Staff),1,1
+M2009,ภัทธิดา แสงมณี,Marketing & Graphic Design,พนักงานทั่วไป (Staff),1,1
+M2011,สิทธิผล ใจหาญ,Marketing & Graphic Design,พนักงานทั่วไป (Staff),1,1
+M2012,ธารทิพย์ โชติบูรณ์,Marketing & Graphic Design,พนักงานทั่วไป (Staff),1,1
+S3014,เสาวรจน์ นุ่มเตี้ย,Marketing & Graphic Design,พนักงานทั่วไป (Staff),1,1
+P2001,ขวัญวลี กิจพายัพ,Procurement Specialist,พนักงานทั่วไป (Staff),1,1
+P2004,จิรชาโรจน์ ธนาชัยกฤติวงษ์,Procurement Specialist,พนักงานทั่วไป (Staff),1,1
+S2002,อนุพันธ์ กิตติวัฒนานันท์,Sales,พนักงานทั่วไป (Staff),1,1
+S2003,ชัชวิน ศิวะโกเศศ,Sales,พนักงานทั่วไป (Staff),1,1
+S2004,ชินพันธ์ สุวรรณวัฒน์,Sales,พนักงานทั่วไป (Staff),1,1
+A2002,สุพัชชา โชติวรรณพฤกษ์,Sales Online,พนักงานทั่วไป (Staff),1,1
+S3003,ศุภาพิชญ์ เมฆอากาศ,Sales Online,พนักงานทั่วไป (Staff),1,1
+S3006,จรีพร พาเหมาะ,Sales Online,พนักงานทั่วไป (Staff),1,1
+S3013,วราญาดา มีปะทัง,Sales Online,พนักงานทั่วไป (Staff),1,1
+S3018,ธีรพล ศรีมุกดา,Sales Online,พนักงานทั่วไป (Staff),1,1
+S3021,สิทธิกร เหมือนชอบ,Sales Online,พนักงานทั่วไป (Staff),1,1
+S3019,ชัยยศ ชื่นกำเหนิด,Sales Shop IBS,พนักงานทั่วไป (Staff),1,1
+S4003,สุรพัฒน์ โพธิ์ทอง,Sales Shop IBS,พนักงานทั่วไป (Staff),1,1
+M2001,ณัฐภัทร วงษาเนาว์,Sales Shop IBS,พนักงานทั่วไป (Staff),1,1
+W1001,ชุลีพร แนบกระโทก,Human Resources,พนักงานทั่วไป (Staff),1,1
+W2001,พัฒนา ศรีโยธา,Warehouse and logistics,พนักงานทั่วไป (Staff),1,1
+W2003,สิทธิพร เทียมตะขบ,Warehouse and logistics,พนักงานทั่วไป (Staff),1,1
+W2004,ธนวัฒน์ ประทุม,Warehouse and logistics,พนักงานทั่วไป (Staff),1,1
+W2005,สิทธิพงศ์ ทองแดง,Warehouse and logistics,พนักงานทั่วไป (Staff),1,1
+W2006,กฤษฎา คำภู,Warehouse and logistics,พนักงานทั่วไป (Staff),1,1
+W2009,ตุลยากร พรพุทธิชัย,Warehouse and logistics,พนักงานทั่วไป (Staff),1,1
+W2011,ณัฐวุฒิ ศัพทานนท์,Warehouse and logistics,พนักงานทั่วไป (Staff),1,1
