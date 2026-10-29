@@ -15,10 +15,13 @@ import {
   Award,
   Plus,
   Minus,
+  Ban,
+  ShieldAlert,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Candidate, Employee, VoteAllocation, VoteCategory } from '../types';
 import { sound } from '../utils/audio';
+import { isSameDepartment } from '../utils/department';
 
 interface VoterPortalProps {
   employees: Employee[];
@@ -45,7 +48,7 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
   const [activeCategory, setActiveCategory] = useState<VoteCategory>('general');
   // For standard 1-vote mode (popular vote or regular employee general vote)
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
-  // For executive multi-point distribution in general vote (e.g. { 'T01': 2, 'T02': 1 })
+  // For executive / supervisor multi-point distribution in general vote
   const [execAllocations, setExecAllocations] = useState<Record<string, number>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [voteSuccess, setVoteSuccess] = useState<boolean>(false);
@@ -90,11 +93,17 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
     }
   }, [matchedEmployee]);
 
-  // Reset executive points when employee or category changes
+  // Reset allocations when employee or category changes, and purge any own-department selection
   useEffect(() => {
     setExecAllocations({});
     setSelectedCandidateId(null);
   }, [matchedEmployee?.id, activeCategory]);
+
+  // Find candidate team corresponding to matched employee's own department
+  const ownDepartmentTeam = useMemo(() => {
+    if (!matchedEmployee?.department) return null;
+    return candidates.find((c) => isSameDepartment(matchedEmployee.department, c)) || null;
+  }, [matchedEmployee?.department, candidates]);
 
   // Check if matched employee already voted in current category
   const hasVotedCurrentCategory = useMemo(() => {
@@ -123,7 +132,16 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
   // Multi-point adjustment handlers
   const handleAddPoints = (teamId: string, delta: number) => {
     const targetTeam = candidates.find((c) => c.id === teamId);
-    if (targetTeam?.isNonVotable) return;
+    if (!targetTeam || targetTeam.isNonVotable) return;
+
+    // Disallow voting for own department
+    if (matchedEmployee && isSameDepartment(matchedEmployee.department, targetTeam)) {
+      sound.playError();
+      alert(
+        `ไม่สามารถลงคะแนนให้ทีม [${targetTeam.code}] ${targetTeam.name} ได้\nเนื่องจากเป็นทีมในแผนกเดียวกันกับท่าน (${matchedEmployee.department})`
+      );
+      return;
+    }
 
     const current = execAllocations[teamId] || 0;
     const available = remainingQuotaPoints;
@@ -155,7 +173,16 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
 
   const handleSetExactPoints = (teamId: string, exact: number) => {
     const targetTeam = candidates.find((c) => c.id === teamId);
-    if (targetTeam?.isNonVotable) return;
+    if (!targetTeam || targetTeam.isNonVotable) return;
+
+    // Disallow voting for own department
+    if (matchedEmployee && isSameDepartment(matchedEmployee.department, targetTeam)) {
+      sound.playError();
+      alert(
+        `ไม่สามารถลงคะแนนให้ทีม [${targetTeam.code}] ${targetTeam.name} ได้\nเนื่องจากเป็นทีมในแผนกเดียวกันกับท่าน (${matchedEmployee.department})`
+      );
+      return;
+    }
 
     const current = execAllocations[teamId] || 0;
     const otherPoints = totalAllocatedPoints - current;
@@ -172,19 +199,44 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
 
   const handleSelectStandardCandidate = (candidateId: string) => {
     const targetTeam = candidates.find((c) => c.id === candidateId);
-    if (targetTeam?.isNonVotable) return;
+    if (!targetTeam || targetTeam.isNonVotable) return;
+
+    // Disallow voting for own department
+    if (matchedEmployee && isSameDepartment(matchedEmployee.department, targetTeam)) {
+      sound.playError();
+      alert(
+        `ไม่สามารถลงคะแนนให้ทีม [${targetTeam.code}] ${targetTeam.name} ได้\nเนื่องจากเป็นทีมในแผนกเดียวกันกับท่าน (${matchedEmployee.department})`
+      );
+      return;
+    }
 
     sound.playSelect();
     setSelectedCandidateId(candidateId);
   };
 
-  // Check validity to submit
+  // Check validity to submit (including strictly no same-department votes)
   const canSubmit = useMemo(() => {
     if (!matchedEmployee || hasVotedCurrentCategory || isSubmitting) return false;
+
     if (isMultiPointVote) {
-      return totalAllocatedPoints === maxQuota;
+      if (totalAllocatedPoints !== maxQuota) return false;
+
+      // Check that none of the allocated candidates belong to own department
+      const hasOwnDeptVote = Object.entries(execAllocations).some(([candId, weight]) => {
+        if (weight <= 0) return false;
+        const cand = candidates.find((c) => c.id === candId);
+        return isSameDepartment(matchedEmployee.department, cand);
+      });
+      if (hasOwnDeptVote) return false;
+
+      return true;
     }
-    return !!selectedCandidateId;
+
+    if (!selectedCandidateId) return false;
+    const selectedCand = candidates.find((c) => c.id === selectedCandidateId);
+    if (isSameDepartment(matchedEmployee.department, selectedCand)) return false;
+
+    return true;
   }, [
     matchedEmployee,
     hasVotedCurrentCategory,
@@ -192,7 +244,9 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
     isMultiPointVote,
     totalAllocatedPoints,
     maxQuota,
+    execAllocations,
     selectedCandidateId,
+    candidates,
   ]);
 
   const handleConfirmVote = async () => {
@@ -220,12 +274,34 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
 
       if (finalAllocations.length === 0) return;
 
+      // Double-check no same-department votes
+      const ownDeptViolation = finalAllocations.find((alloc) => {
+        const cand = candidates.find((c) => c.id === alloc.candidateId);
+        return isSameDepartment(matchedEmployee.department, cand);
+      });
+
+      if (ownDeptViolation) {
+        sound.playError();
+        alert(
+          `เกิดข้อผิดพลาด: กติกาไม่อนุญาตให้ลงคะแนนให้ทีมในแผนกเดียวกัน (${matchedEmployee.department})`
+        );
+        return;
+      }
+
       const ok = await onCastVote(matchedEmployee, finalAllocations, activeCategory);
       if (ok) {
-        sound.playVoteSubmitted(activeCategory === 'general' && (matchedEmployee.isExecutive || matchedEmployee.isSupervisor));
+        sound.playVoteSubmitted(
+          activeCategory === 'general' &&
+            (matchedEmployee.isExecutive || matchedEmployee.isSupervisor)
+        );
 
         confetti({
-          particleCount: matchedEmployee.isExecutive && activeCategory === 'general' ? 120 : matchedEmployee.isSupervisor && activeCategory === 'general' ? 95 : 70,
+          particleCount:
+            matchedEmployee.isExecutive && activeCategory === 'general'
+              ? 120
+              : matchedEmployee.isSupervisor && activeCategory === 'general'
+              ? 95
+              : 70,
           spread: 70,
           origin: { y: 0.6 },
           colors:
@@ -363,7 +439,7 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
               ใส่รหัสพนักงาน (Employee ID)
             </h2>
             <p className="text-xs text-slate-400">
-              พิมพ์รหัสพนักงานเพื่อดึงข้อมูลชื่อ-สกุล และตรวจสอบสิทธิ์คะแนนโหวตอัตโนมัติ
+              พิมพ์รหัสพนักงานเพื่อดึงข้อมูล ตรวจสอบสิทธิ์คะแนน และแผนกสังกัด
             </p>
           </div>
 
@@ -393,7 +469,7 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
               }}
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setTimeout(() => setSearchFocused(false), 200)}
-              placeholder="ตัวอย่าง: EMP-001 หรือพิมพ์ชื่อเพื่อค้นหา..."
+              placeholder="ตัวอย่าง: A1002, E1001 หรือพิมพ์ชื่อเพื่อค้นหา..."
               className="w-full pl-12 pr-28 py-3.5 bg-slate-950/80 border-2 border-slate-700/80 focus:border-indigo-500 rounded-xl text-base text-white placeholder-slate-500 focus:outline-hidden transition-all shadow-inner font-mono tracking-wide"
             />
             {inputCode && (
@@ -447,8 +523,6 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
               ))}
             </div>
           )}
-
-
         </div>
 
         {/* Matched Employee Identity Pop-up Card */}
@@ -494,8 +568,8 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
                     </div>
 
                     <div className="flex items-center gap-3 text-xs text-slate-400 mt-1 flex-wrap">
-                      <span className="flex items-center gap-1">
-                        <Building className="w-3.5 h-3.5 text-slate-500" />
+                      <span className="flex items-center gap-1 font-medium text-slate-300">
+                        <Building className="w-3.5 h-3.5 text-indigo-400" />
                         {matchedEmployee.department}
                       </span>
                       <span className="flex items-center gap-1">
@@ -553,6 +627,16 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Department Prohibition Reminder Banner */}
+              {ownDepartmentTeam && (
+                <div className="mt-3 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>
+                    กติกาการโหวต: คุณสังกัดแผนก <strong>"{matchedEmployee.department}"</strong> จึง<strong>ไม่สามารถลงคะแนนให้ทีม [{ownDepartmentTeam.code}] {ownDepartmentTeam.name}</strong> ได้
+                  </span>
+                </div>
+              )}
 
               {/* Already voted warning */}
               {hasVotedCurrentCategory && (
@@ -618,7 +702,10 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
               {successData.allocations.map((alloc) => {
                 const team = candidates.find((c) => c.id === alloc.candidateId);
                 return (
-                  <div key={alloc.candidateId} className="flex justify-between items-center bg-slate-950/60 px-2.5 py-1.5 rounded-lg">
+                  <div
+                    key={alloc.candidateId}
+                    className="flex justify-between items-center bg-slate-950/60 px-2.5 py-1.5 rounded-lg"
+                  >
                     <span className="text-indigo-300 font-semibold">
                       [{team?.code}] {team?.name}
                     </span>
@@ -677,18 +764,23 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <span className="w-6 h-6 rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 flex items-center justify-center text-xs font-bold">
-                  2
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-lg bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 flex items-center justify-center text-xs font-bold">
+                    2
+                  </span>
+                  เลือกทีมที่ต้องการโหวต ({activeCategory === 'general' ? 'คะแนนทั่วไป' : 'Popular Vote'})
+                </h2>
+                <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-300 border border-rose-500/30 font-medium">
+                  ห้ามโหวตแผนกเดียวกัน
                 </span>
-                เลือกทีมที่ต้องการโหวต ({activeCategory === 'general' ? 'คะแนนทั่วไป' : 'Popular Vote'})
-              </h2>
-              <p className="text-xs text-slate-400">
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
                 {isExecutiveGeneralVote
-                  ? 'ท่านมีสิทธิ์ 3 คะแนน สามารถเลือกให้ทีมเดียว +3 หรือกระจาย +1, +2, +3 ข้ามทีมได้'
+                  ? 'ท่านมีสิทธิ์ 3 คะแนน สามารถเลือกให้ทีมเดียว +3 หรือกระจาย +1, +2, +3 ข้ามทีมได้ (ยกเว้นแผนกของท่าน)'
                   : isSupervisorGeneralVote
-                  ? 'ท่านมีสิทธิ์ 2 คะแนน สามารถเลือกให้ทีมเดียว +2 หรือกระจาย +1, +2 ข้ามทีมได้'
-                  : 'คลิกเลือก 1 ทีมเพื่อมอบคะแนนของคุณ (1 คะแนน)'}
+                  ? 'ท่านมีสิทธิ์ 2 คะแนน สามารถเลือกให้ทีมเดียว +2 หรือกระจาย +1, +2 ข้ามทีมได้ (ยกเว้นแผนกของท่าน)'
+                  : 'คลิกเลือก 1 ทีมเพื่อมอบคะแนนของคุณ (1 คะแนน ยกเว้นแผนกของท่าน)'}
               </p>
             </div>
 
@@ -734,13 +826,16 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
             )}
           </div>
 
-          {/* Teams Grid (8 Teams including T08 Non-Votable) */}
+          {/* Teams Grid (8 Teams with T08 Non-Votable and Own-Department Disabled) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             {candidates.map((cand) => {
               const allocatedPoints = execAllocations[cand.id] || 0;
               const isSelectedStandard = selectedCandidateId === cand.id;
               const isNonVotable = !!cand.isNonVotable;
+              const isOwnDepartment =
+                !!matchedEmployee && isSameDepartment(matchedEmployee.department, cand);
 
+              // 1. Non-Votable Team Case (e.g. T08 HR)
               if (isNonVotable) {
                 return (
                   <div
@@ -748,9 +843,7 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
                     className="p-4 rounded-xl border-2 border-dashed border-slate-800/80 bg-slate-950/40 opacity-60 cursor-not-allowed select-none flex flex-col justify-between"
                   >
                     <div className="flex items-start gap-3">
-                      <div
-                        className="w-11 h-11 rounded-xl flex items-center justify-center font-black text-sm text-slate-400 shrink-0 shadow-md bg-slate-800 border border-slate-700"
-                      >
+                      <div className="w-11 h-11 rounded-xl flex items-center justify-center font-black text-sm text-slate-400 shrink-0 shadow-md bg-slate-800 border border-slate-700">
                         {cand.code}
                       </div>
 
@@ -781,6 +874,49 @@ export const VoterPortal: React.FC<VoterPortalProps> = ({
                 );
               }
 
+              // 2. Same Department Prohibited Case
+              if (isOwnDepartment) {
+                return (
+                  <div
+                    key={cand.id}
+                    className="p-4 rounded-xl border-2 border-dashed border-rose-800/50 bg-gradient-to-br from-rose-950/20 via-slate-950/60 to-slate-950/40 opacity-75 select-none flex flex-col justify-between cursor-not-allowed"
+                    title={`ไม่สามารถโหวตได้เนื่องจากเป็นทีมในแผนกเดียวกัน (${matchedEmployee?.department})`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={`w-11 h-11 rounded-xl flex items-center justify-center font-black text-sm text-white shrink-0 shadow-md ${cand.color} opacity-40`}
+                      >
+                        {cand.code}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1 flex-wrap">
+                          <h4 className="text-sm font-bold text-slate-300 truncate">
+                            {cand.name}
+                          </h4>
+                          <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold flex items-center gap-1">
+                            <Ban className="w-3 h-3" /> แผนกของคุณ
+                          </span>
+                        </div>
+
+                        <div className="text-xs text-rose-300/80 font-medium mt-0.5">
+                          {cand.subtitle}
+                        </div>
+
+                        <p className="text-xs text-slate-400 mt-1">
+                          คุณสังกัดแผนก <strong className="text-rose-300">"{matchedEmployee?.department}"</strong> ตามกติกาไม่สามารถโหวตให้ทีมของแผนกตนเองได้
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 pt-2 border-t border-rose-900/30 text-[11px] text-rose-400/90 flex items-center justify-center gap-1.5 font-medium">
+                      <span>ไม่อนุญาตให้ลงคะแนนให้ทีมในแผนกเดียวกัน</span>
+                    </div>
+                  </div>
+                );
+              }
+
+              // 3. Normal Votable Team Case
               return (
                 <div
                   key={cand.id}

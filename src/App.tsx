@@ -29,6 +29,7 @@ import {
   testFirestoreConnection,
 } from './services/firebase';
 import { sound } from './utils/audio';
+import { isSameDepartment } from './utils/department';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'vote' | 'dashboard' | 'admin'>('vote');
@@ -316,6 +317,16 @@ export default function App() {
     allocations: VoteAllocation[],
     category: VoteCategory
   ): Promise<boolean> => {
+    // Validate against voting for own department
+    const ownDeptVote = allocations.find((alloc) => {
+      const cand = candidates.find((c) => c.id === alloc.candidateId);
+      return isSameDepartment(employee.department, cand);
+    });
+    if (ownDeptVote) {
+      alert(`กติกาไม่อนุญาตให้ลงคะแนนให้ทีมในแผนกเดียวกัน (${employee.department})`);
+      return false;
+    }
+
     const timestamp = new Date().toLocaleTimeString('th-TH', {
       hour: '2-digit',
       minute: '2-digit',
@@ -476,10 +487,12 @@ export default function App() {
 
     // Simulate for 3 unvoted in general
     for (const emp of unvotedGeneral.slice(0, 3)) {
+      const eligible = votableCandidates.filter((c) => !isSameDepartment(emp.department, c));
+      if (eligible.length === 0) continue;
       const time = new Date().toLocaleTimeString('th-TH');
 
       if (emp.isExecutive) {
-        const shuffled = [...votableCandidates].sort(() => 0.5 - Math.random());
+        const shuffled = [...eligible].sort(() => 0.5 - Math.random());
         const teamA = shuffled[0];
         const teamB = shuffled[1] || shuffled[0];
 
@@ -517,7 +530,7 @@ export default function App() {
 
         await castVoteInFirestore([voteA, voteB], emp.id, 'general', `${teamA.code} (+2), ${teamB.code} (+1)`, time).catch(() => {});
       } else if (emp.isSupervisor || emp.voteWeight === 2) {
-        const shuffled = [...votableCandidates].sort(() => 0.5 - Math.random());
+        const shuffled = [...eligible].sort(() => 0.5 - Math.random());
         const teamA = shuffled[0];
         const v: VoteRecord = {
           id: `vote-sim-gen-${Date.now()}-${emp.id}`,
@@ -540,7 +553,7 @@ export default function App() {
         }
         await castVoteInFirestore([v], emp.id, 'general', `${teamA.code} (+2)`, time).catch(() => {});
       } else {
-        const randomCand = votableCandidates[Math.floor(Math.random() * votableCandidates.length)];
+        const randomCand = eligible[Math.floor(Math.random() * eligible.length)];
         const v: VoteRecord = {
           id: `vote-sim-gen-${Date.now()}-${emp.id}`,
           category: 'general',
@@ -566,7 +579,9 @@ export default function App() {
 
     // Simulate for 3 unvoted in popular
     for (const emp of unvotedPopular.slice(0, 3)) {
-      const randomCand = votableCandidates[Math.floor(Math.random() * votableCandidates.length)];
+      const eligible = votableCandidates.filter((c) => !isSameDepartment(emp.department, c));
+      if (eligible.length === 0) continue;
+      const randomCand = eligible[Math.floor(Math.random() * eligible.length)];
       const time = new Date().toLocaleTimeString('th-TH');
       const v: VoteRecord = {
         id: `vote-sim-pop-${Date.now()}-${emp.id}`,

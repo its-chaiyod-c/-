@@ -243,7 +243,7 @@ export const AdminManager: React.FC<AdminManagerProps> = ({
             }`}
           >
             <Crown className="w-4 h-4" />
-            รายชื่อ 6 ทีม ({candidates.length})
+            รายชื่อ 8 ทีม ({candidates.length})
           </button>
 
           <button

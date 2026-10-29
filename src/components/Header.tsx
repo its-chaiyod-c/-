@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import { sound } from '../utils/audio';
 
+import firebaseConfig from '../../firebase-applet-config.json';
+
 export const ADMIN_EMAILS = [
   'chuleeporn180231@gmail.com',
   'its.chaiyod.c@gmail.com',
@@ -89,21 +91,21 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             <div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 <h1 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-2">
-                  <span className="bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">
-                    ระบบโหวตคะแนน
+                  <span className="bg-gradient-to-r from-white via-indigo-100 to-indigo-300 bg-clip-text text-transparent drop-shadow-xs">
+                    ระบบโหวตคะแนน 8 ทีม
                   </span>
                 </h1>
 
-                {/* Firebase Real-time Status Badge */}
+                {/* Firebase Real-time Status Badge with Project ID */}
                 <div
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border backdrop-blur-xs transition-all ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border backdrop-blur-md transition-all shadow-xs ${
                     firebaseConnected
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 shadow-xs shadow-emerald-500/10'
-                      : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                      ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 shadow-emerald-500/10'
+                      : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
                   }`}
-                  title={firebaseConnected ? 'เชื่อมต่อ Firebase Firestore เรียลไทม์สมบูรณ์' : 'กำลังเชื่อมต่อ Firebase'}
+                  title={`Firebase Project: ${firebaseConfig.projectId || 'p2v-group-p2v1234'} (Firestore Live)`}
                 >
                   <span className="relative flex h-2 w-2">
                     {firebaseConnected && (
@@ -115,11 +117,13 @@ export const Header: React.FC<HeaderProps> = ({
                       }`}
                     ></span>
                   </span>
-                  <span className="hidden sm:inline font-mono font-medium">Firebase Live</span>
+                  <span className="font-mono font-medium text-[10.5px]">
+                    Firebase: <span className="text-white font-bold">{firebaseConfig.projectId || 'p2v-group-p2v1234'}</span>
+                  </span>
                 </div>
               </div>
 
-              <p className="text-[11px] sm:text-xs text-slate-400 font-medium hidden sm:flex items-center gap-2">
+              <p className="text-[11px] sm:text-xs text-slate-400 font-medium hidden sm:flex items-center gap-2 mt-0.5">
                 <span>คะแนนทั่วไป: ผู้บริหาร 3 / หัวหน้างาน 2 / พนักงาน 1</span>
                 <span className="text-slate-600">•</span>
                 <span className="text-pink-400 font-semibold">Popular Vote คนละ 1 คะแนน</span>
